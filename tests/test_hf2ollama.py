@@ -215,6 +215,37 @@ class TestFindExistingGgufs:
         assert h.find_existing_ggufs(tmp_path) == []
 
 
+class TestInitState:
+    def test_is_active_venv_returns_bool(self) -> None:
+        # We don't assert True/False — pytest may run inside or outside a venv.
+        # We just verify the function returns a real bool, not None/raise.
+        assert isinstance(h.is_active_venv(), bool)
+
+    def test_load_initialized_python_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(h, "STATE_FILE", tmp_path / "no-such-file")
+        assert h.load_initialized_python() is None
+
+    def test_load_initialized_python_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        state = tmp_path / "state"
+        state.write_text("\n", encoding="utf-8")
+        monkeypatch.setattr(h, "STATE_FILE", state)
+        assert h.load_initialized_python() is None
+
+    def test_load_initialized_python_stale(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        state = tmp_path / "state"
+        state.write_text(str(tmp_path / "does-not-exist") + "\n", encoding="utf-8")
+        monkeypatch.setattr(h, "STATE_FILE", state)
+        assert h.load_initialized_python() is None
+
+    def test_load_initialized_python_valid(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        py = tmp_path / "fake-python"
+        py.touch()
+        state = tmp_path / "state"
+        state.write_text(str(py) + "\n", encoding="utf-8")
+        monkeypatch.setattr(h, "STATE_FILE", state)
+        assert h.load_initialized_python() == py
+
+
 class TestCli:
     """Subprocess-level smoke tests for the actual CLI entry point."""
 

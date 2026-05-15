@@ -39,10 +39,14 @@ BASE_DIR = Path(os.getenv("HF2OLLAMA_WORKSPACE", str(Path.cwd()))).resolve()
 HF_DIR = Path(os.getenv("HF2OLLAMA_HF_DIR", str(BASE_DIR / "hf"))).resolve()
 HF_CACHE_DIR = Path(os.getenv("HF2OLLAMA_CACHE_DIR", str(BASE_DIR / ".hf_cache"))).resolve()
 LLAMA_CPP = Path(os.getenv("HF2OLLAMA_LLAMA_CPP_DIR", str(BASE_DIR / "llama.cpp"))).resolve()
-# Conversion deps (torch, transformers, sentencepiece, ...) are installed
-# into an isolated venv inside the llama.cpp checkout to avoid polluting
-# the user's interpreter. Overrideable via HF2OLLAMA_LLAMA_VENV.
-LLAMA_VENV = Path(os.getenv("HF2OLLAMA_LLAMA_VENV", str(LLAMA_CPP / ".venv"))).resolve()
+# Where `hf2ollama init` creates a venv when no venv is active. If the user
+# runs init from inside an already-active venv, that one is reused and this
+# path is ignored.
+DEFAULT_VENV = Path(os.getenv("HF2OLLAMA_VENV", str(BASE_DIR / "venv"))).resolve()
+# Plain-text file written by `hf2ollama init`, containing the path to the
+# python interpreter that should run convert_hf_to_gguf.py. Lives inside
+# the llama.cpp checkout so it travels with the rest of the setup.
+STATE_FILE = LLAMA_CPP / ".hf2ollama-python"
 LLAMA_REPO = "https://github.com/ggerganov/llama.cpp.git"
 # Branch, tag or 40-char SHA to clone. Defaults to "master" for convenience;
 # set HF2OLLAMA_LLAMA_CPP_REF=<tag-or-sha> to pin to an audited revision.
@@ -220,6 +224,7 @@ def print_dry_run_plan(model_id: str, quant: str | None, ollama_name_arg: str | 
     print(f"  Workspace:   {BASE_DIR}")
     print(f"  Snapshot to: {target}")
 
+    matching: list[tuple[str, int]] = []
     if quant:
         matching = [(n, s) for n, s in ggufs if quant.lower() in n.lower()]
         total = sum(s for _, s in matching)
@@ -235,11 +240,14 @@ def print_dry_run_plan(model_id: str, quant: str | None, ollama_name_arg: str | 
         print(f"  Download:    HF snapshot (excluding {', '.join(IGNORE_PATTERNS)})  (~{human_size(total)} of weights)")
 
     needs_conversion = not ggufs and has_config
+    initialized_python = load_initialized_python()
     if needs_conversion:
-        print(f"  Conversion:  required — clone llama.cpp@{LLAMA_REPO_REF} into {LLAMA_CPP}")
-        print(f"               create isolated venv at {LLAMA_VENV}")
-        print("               pip install -r llama.cpp/requirements/requirements-convert_hf_to_gguf.txt (into the venv only)")
-        print(f"               run convert_hf_to_gguf.py --outtype {OUTTYPE}")
+        if initialized_python is None:
+            print("  Conversion:  required — but hf2ollama init has NOT been run.")
+            print("               Next step: run `hf2ollama init` before this command.")
+        else:
+            print(f"  Conversion:  required — convert_hf_to_gguf.py --outtype {OUTTYPE}")
+            print(f"               python: {initialized_python}")
     elif ggufs:
         chosen = pick_gguf([Path(n) for n, _ in (matching if quant else ggufs)], preferred=quant) if (matching if quant else ggufs) else None
         if chosen:
@@ -260,39 +268,108 @@ def venv_python(venv: Path) -> Path:
     return venv / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
 
 
-def ensure_llama_cpp() -> tuple[Path, Path]:
-    """Ensure a usable llama.cpp checkout and isolated venv are available.
+def is_active_venv() -> bool:
+    """True when the current process runs inside a venv / virtualenv."""
+    return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
 
-    Returns ``(convert_script, python_executable)``. The python executable
-    lives in a dedicated venv at ``LLAMA_VENV`` so conversion deps
-    (torch, transformers, sentencepiece, ...) never touch the user's
-    interpreter.
-    """
-    convert = LLAMA_CPP / "convert_hf_to_gguf.py"
 
-    if not LLAMA_CPP.exists():
-        if not shutil.which("git"):
-            raise RuntimeError(
-                "llama.cpp is required for converting this model, but no clone was found "
-                f"at {LLAMA_CPP} and 'git' is not in PATH.\n"
-                "Either install git so the script can clone it, or point "
-                "HF2OLLAMA_LLAMA_CPP_DIR at an existing llama.cpp checkout."
-            )
-        logger.info(f"Cloning llama.cpp ({LLAMA_REPO_REF}) into {LLAMA_CPP}")
-        subprocess.run(
-            ["git", "clone", "--depth", "1", "--branch", LLAMA_REPO_REF, LLAMA_REPO, str(LLAMA_CPP)],
-            check=True,
-            timeout=600,
+def load_initialized_python() -> Path | None:
+    """Return the python path persisted by `hf2ollama init`, or None if missing/stale."""
+    if not STATE_FILE.exists():
+        return None
+    line = STATE_FILE.read_text(encoding="utf-8").strip()
+    if not line:
+        return None
+    p = Path(line)
+    return p if p.exists() else None
+
+
+def clone_llama_cpp() -> None:
+    """Clone llama.cpp into LLAMA_CPP. No-op if it already exists."""
+    if LLAMA_CPP.exists():
+        return
+    if not shutil.which("git"):
+        raise RuntimeError(
+            f"Cannot clone llama.cpp: 'git' is not in PATH and {LLAMA_CPP} does not exist.\n" "Install git, or point HF2OLLAMA_LLAMA_CPP_DIR at an existing checkout."
         )
+    logger.info(f"Cloning llama.cpp ({LLAMA_REPO_REF}) into {LLAMA_CPP}")
+    subprocess.run(
+        ["git", "clone", "--depth", "1", "--branch", LLAMA_REPO_REF, LLAMA_REPO, str(LLAMA_CPP)],
+        check=True,
+        timeout=600,
+    )
 
+
+def cmd_init() -> None:
+    """Set up llama.cpp and prepare a Python environment for conversion.
+
+    - Clones llama.cpp if missing.
+    - If a venv is already active, installs conversion deps INTO IT
+      (does not create another one).
+    - If no venv is active, creates one at DEFAULT_VENV (defaults to
+      <workspace>/venv) and installs deps there.
+    - Records the resolved python interpreter path in STATE_FILE so
+      subsequent `hf2ollama <model_id>` runs can pick it up.
+    """
+    clone_llama_cpp()
+    convert = LLAMA_CPP / "convert_hf_to_gguf.py"
     if not convert.exists():
         raise FileNotFoundError(
-            f"{convert} not found. {LLAMA_CPP} does not look like a llama.cpp checkout.\n" "Delete that directory and rerun, or set HF2OLLAMA_LLAMA_CPP_DIR to a working clone."
+            f"{convert} not found. {LLAMA_CPP} does not look like a llama.cpp checkout.\n"
+            "Delete that directory and rerun init, or set HF2OLLAMA_LLAMA_CPP_DIR to a working clone."
         )
 
-    # If the checkout has git metadata, surface the resolved commit so a
-    # compromised upstream is easier to spot. Users may also point at a
-    # tarball-extracted directory with no .git/ — skip the lookup in that case.
+    if is_active_venv():
+        # Keep sys.executable as-is — .resolve() would follow the venv symlink
+        # to system python and defeat the isolation.
+        python_bin = Path(sys.executable)
+        logger.info(f"Using already-active venv: sys.prefix={sys.prefix}")
+    else:
+        python_bin = venv_python(DEFAULT_VENV)
+        if not python_bin.exists():
+            logger.info(f"No active venv detected. Creating one at {DEFAULT_VENV}")
+            subprocess.run(
+                [sys.executable, "-m", "venv", str(DEFAULT_VENV)],
+                check=True,
+                timeout=300,
+            )
+            subprocess.run(
+                [str(python_bin), "-m", "pip", "install", "-q", "--upgrade", "pip"],
+                check=True,
+                timeout=300,
+            )
+        else:
+            logger.info(f"Reusing existing venv at {DEFAULT_VENV}")
+
+    req = LLAMA_CPP / "requirements" / "requirements-convert_hf_to_gguf.txt"
+    if req.exists():
+        logger.info(f"Installing llama.cpp conversion requirements into {python_bin}")
+        subprocess.run(
+            [str(python_bin), "-m", "pip", "install", "-q", "-r", str(req)],
+            check=True,
+            timeout=900,
+        )
+
+    STATE_FILE.write_text(str(python_bin) + "\n", encoding="utf-8")
+    logger.info(f"hf2ollama initialized. Conversion python: {python_bin}")
+    logger.info(f"State recorded in {STATE_FILE}")
+
+
+def ensure_llama_cpp() -> tuple[Path, Path]:
+    """Verify that `hf2ollama init` was run and return ``(convert_script, python)``.
+
+    No side effects — does NOT clone, create venvs, or install anything.
+    Tell the user to run `hf2ollama init` if state is missing or stale.
+    """
+    convert = LLAMA_CPP / "convert_hf_to_gguf.py"
+    python_bin = load_initialized_python()
+    if python_bin is None or not convert.exists():
+        raise RuntimeError(
+            "hf2ollama is not initialized for conversion. Run `hf2ollama init` first — "
+            "it will clone llama.cpp and prepare a Python environment for the conversion step.\n"
+            f"(expected state file at {STATE_FILE}, llama.cpp clone at {LLAMA_CPP})"
+        )
+
     if shutil.which("git") and (LLAMA_CPP / ".git").exists():
         sha = subprocess.check_output(
             ["git", "-C", str(LLAMA_CPP), "rev-parse", "HEAD"],
@@ -302,33 +379,6 @@ def ensure_llama_cpp() -> tuple[Path, Path]:
         logger.info(f"llama.cpp at {sha} ({LLAMA_REPO_REF})")
     else:
         logger.info(f"Using llama.cpp at {LLAMA_CPP} (no git metadata, commit unknown)")
-
-    python_bin = venv_python(LLAMA_VENV)
-    if not python_bin.exists():
-        logger.info(f"Creating isolated venv for llama.cpp at {LLAMA_VENV}")
-        subprocess.run(
-            [sys.executable, "-m", "venv", str(LLAMA_VENV)],
-            check=True,
-            timeout=300,
-        )
-        # Upgrade pip inside the venv once — old pip versions choke on some wheels.
-        subprocess.run(
-            [str(python_bin), "-m", "pip", "install", "-q", "--upgrade", "pip"],
-            check=True,
-            timeout=300,
-        )
-
-    req = LLAMA_CPP / "requirements" / "requirements-convert_hf_to_gguf.txt"
-    if req.exists():
-        marker = LLAMA_VENV / ".hf2ollama-deps-installed"
-        if not marker.exists() or marker.stat().st_mtime < req.stat().st_mtime:
-            logger.info(f"Installing llama.cpp conversion requirements into {LLAMA_VENV}")
-            subprocess.run(
-                [str(python_bin), "-m", "pip", "install", "-q", "-r", str(req)],
-                check=True,
-                timeout=900,
-            )
-            marker.touch()
 
     return convert, python_bin
 
@@ -414,12 +464,27 @@ def derive_ollama_name(model_id: str) -> str:
 
 
 def main() -> None:
+    # Manual dispatch keeps backward compat: `hf2ollama org/name ...` continues
+    # to work; only the literal first token `init` selects the setup subcommand.
+    argv = sys.argv[1:]
+    if argv and argv[0] == "init":
+        try:
+            cmd_init()
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            cmd_repr = exc.cmd if isinstance(exc.cmd, str) else " ".join(str(c) for c in exc.cmd)
+            logger.error(f"init failed: {type(exc).__name__}: {cmd_repr}")
+            sys.exit(1)
+        except (FileNotFoundError, RuntimeError) as exc:
+            logger.error(str(exc))
+            sys.exit(1)
+        return
+
     parser = argparse.ArgumentParser(
-        description="Download a HuggingFace model and convert it to GGUF for Ollama.",
+        description="Download a HuggingFace model and convert it to GGUF for Ollama. Run `hf2ollama init` once to prepare the conversion environment.",
     )
     parser.add_argument(
         "model_id",
-        help="HuggingFace model id, e.g. SicariusSicariiStuff/Assistant_Pepe_70B",
+        help="HuggingFace model id, e.g. SicariusSicariiStuff/Assistant_Pepe_70B. Use `init` to set up the conversion environment.",
     )
     parser.add_argument(
         "--ollama-name",
@@ -439,7 +504,7 @@ def main() -> None:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print the planned actions (clone, venv, download, convert) without executing them",
+        help="Print the planned actions (download, convert) without executing them",
     )
     args = parser.parse_args()
 
@@ -489,6 +554,21 @@ def main() -> None:
         if args.dry_run:
             print_dry_run_plan(model_id, args.quant, args.ollama_name)
             return
+
+        # If the repo will require conversion (normal HF model, no prebuilt
+        # GGUF) and `hf2ollama init` has not been run yet, bail out *before*
+        # downloading a ~100GB snapshot.
+        if load_initialized_python() is None:
+            files = list_repo_files(model_id)
+            has_gguf = any(n.lower().endswith(".gguf") for n, _ in files)
+            has_config = any(n == "config.json" for n, _ in files)
+            if not has_gguf and has_config:
+                logger.error(
+                    "This model needs to be converted from HF format to GGUF, but the conversion "
+                    "environment is not set up yet. Run `hf2ollama init` first — it clones llama.cpp "
+                    "and prepares a Python venv for the conversion script. After that, rerun this command."
+                )
+                sys.exit(1)
 
         model_dir = download_model(model_id, quant=args.quant)
         existing = find_existing_ggufs(model_dir)
