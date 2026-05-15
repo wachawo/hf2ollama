@@ -183,12 +183,14 @@ def ensure_llama_cpp() -> Path:
         subprocess.run(
             ["git", "clone", "--depth", "1", "--branch", LLAMA_REPO_REF, LLAMA_REPO, str(LLAMA_CPP)],
             check=True,
+            timeout=600,
         )
 
     # Surface the resolved commit so a compromised upstream is easier to spot.
     sha = subprocess.check_output(
         ["git", "-C", str(LLAMA_CPP), "rev-parse", "HEAD"],
         text=True,
+        timeout=30,
     ).strip()
     logger.info(f"llama.cpp at {sha} ({LLAMA_REPO_REF})")
 
@@ -198,6 +200,7 @@ def ensure_llama_cpp() -> Path:
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "-q", "-r", str(req)],
             check=True,
+            timeout=600,
         )
 
     convert = LLAMA_CPP / "convert_hf_to_gguf.py"
@@ -367,6 +370,10 @@ def main() -> None:
         sys.exit(1)
     except subprocess.CalledProcessError as exc:
         logger.error(f"Subprocess failed (rc={exc.returncode}): {' '.join(exc.cmd)}")
+        sys.exit(1)
+    except subprocess.TimeoutExpired as exc:
+        cmd = exc.cmd if isinstance(exc.cmd, str) else " ".join(str(c) for c in exc.cmd)
+        logger.error(f"Subprocess timed out after {exc.timeout}s: {cmd}")
         sys.exit(1)
     except Exception as exc:
         logger.error(f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
