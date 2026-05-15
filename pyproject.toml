@@ -26,21 +26,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Utilities",
 ]
-dependencies = [
-    "huggingface_hub>=0.25.0",
-    "python-dotenv>=1.0.0",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pre-commit>=3.7",
-    "black>=24.0",
-    "ruff>=0.8",
-    "mypy>=1.10",
-    "build>=1.0",
-    "pytest>=8.0",
-    "pytest-cov>=5.0",
-]
+dynamic = ["dependencies"]
 
 [project.urls]
 Homepage = "https://github.com/wachawo/hf2ollama"
@@ -53,6 +39,9 @@ hf2ollama = "hf2ollama:main"
 
 [tool.setuptools]
 py-modules = ["hf2ollama"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = "requirements.txt" }
 
 [tool.black]
 line-length = 180

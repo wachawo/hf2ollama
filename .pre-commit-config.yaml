@@ -27,9 +27,6 @@ repos:
     rev: v1.13.0
     hooks:
       - id: mypy
-        additional_dependencies:
-          - "huggingface_hub>=0.25.0"
-          - "python-dotenv>=1.0.0"
         args: ["--ignore-missing-imports"]
 
   - repo: local
