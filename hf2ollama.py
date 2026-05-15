@@ -39,6 +39,10 @@ BASE_DIR = Path(os.getenv("HF2OLLAMA_WORKSPACE", str(Path.cwd()))).resolve()
 HF_DIR = Path(os.getenv("HF2OLLAMA_HF_DIR", str(BASE_DIR / "hf"))).resolve()
 HF_CACHE_DIR = Path(os.getenv("HF2OLLAMA_CACHE_DIR", str(BASE_DIR / ".hf_cache"))).resolve()
 LLAMA_CPP = Path(os.getenv("HF2OLLAMA_LLAMA_CPP_DIR", str(BASE_DIR / "llama.cpp"))).resolve()
+# Conversion deps (torch, transformers, sentencepiece, ...) are installed
+# into an isolated venv inside the llama.cpp checkout to avoid polluting
+# the user's interpreter. Overrideable via HF2OLLAMA_LLAMA_VENV.
+LLAMA_VENV = Path(os.getenv("HF2OLLAMA_LLAMA_VENV", str(LLAMA_CPP / ".venv"))).resolve()
 LLAMA_REPO = "https://github.com/ggerganov/llama.cpp.git"
 # Branch, tag or 40-char SHA to clone. Defaults to "master" for convenience;
 # set HF2OLLAMA_LLAMA_CPP_REF=<tag-or-sha> to pin to an audited revision.
@@ -192,8 +196,67 @@ def print_quant_list(model_id: str) -> None:
     print("Probably an adapter, dataset, or empty placeholder repo.")
 
 
-def ensure_llama_cpp() -> Path:
-    """Ensure a usable llama.cpp checkout is available and return the convert script path."""
+def print_dry_run_plan(model_id: str, quant: str | None, ollama_name_arg: str | None) -> None:
+    """Print the actions that would be taken for ``model_id`` without executing them."""
+    org, name = model_id.split("/", 1)
+    target = HF_DIR / org / name
+    files = list_repo_files(model_id)
+    ggufs = [(n, s) for n, s in files if n.lower().endswith(".gguf")]
+    has_config = any(n == "config.json" for n, _ in files)
+
+    print("DRY RUN — the following actions would be performed:")
+    print()
+    print(f"  Workspace:   {BASE_DIR}")
+    print(f"  Snapshot to: {target}")
+
+    if quant:
+        matching = [(n, s) for n, s in ggufs if quant.lower() in n.lower()]
+        total = sum(s for _, s in matching)
+        print(f"  Download:    {len(matching)} .gguf file(s) matching {quant!r}  (~{human_size(total)})")
+        for n, s in matching:
+            print(f"               - {n}   {human_size(s)}")
+    elif ggufs:
+        total = sum(s for _, s in ggufs)
+        print(f"  Download:    {len(ggufs)} .gguf file(s) shipped by the repo  (~{human_size(total)})")
+    else:
+        weights = [(n, s) for n, s in files if n.lower().endswith(WEIGHT_EXTS)]
+        total = sum(s for _, s in weights)
+        print(f"  Download:    HF snapshot (excluding {', '.join(IGNORE_PATTERNS)})  (~{human_size(total)} of weights)")
+
+    needs_conversion = not ggufs and has_config
+    if needs_conversion:
+        print(f"  Conversion:  required — clone llama.cpp@{LLAMA_REPO_REF} into {LLAMA_CPP}")
+        print(f"               create isolated venv at {LLAMA_VENV}")
+        print("               pip install -r llama.cpp/requirements/requirements-convert_hf_to_gguf.txt (into the venv only)")
+        print(f"               run convert_hf_to_gguf.py --outtype {OUTTYPE}")
+    elif ggufs:
+        chosen = pick_gguf([Path(n) for n, _ in (matching if quant else ggufs)], preferred=quant) if (matching if quant else ggufs) else None
+        if chosen:
+            print(f"  Conversion:  skipped — would use {chosen.name}")
+    else:
+        print("  Conversion:  cannot proceed — repo has no .gguf and no config.json")
+
+    print(f"  Modelfile:   would be written to {target}/Modelfile")
+    ollama_name = safe(ollama_name_arg) if ollama_name_arg else derive_ollama_name(model_id)
+    print()
+    print("Final commands you would run:")
+    print(f"  ollama create {ollama_name} -f {target}/Modelfile")
+    print(f"  ollama run {ollama_name}")
+
+
+def venv_python(venv: Path) -> Path:
+    """Return the path to the python interpreter inside a venv."""
+    return venv / ("Scripts" if os.name == "nt" else "bin") / ("python.exe" if os.name == "nt" else "python")
+
+
+def ensure_llama_cpp() -> tuple[Path, Path]:
+    """Ensure a usable llama.cpp checkout and isolated venv are available.
+
+    Returns ``(convert_script, python_executable)``. The python executable
+    lives in a dedicated venv at ``LLAMA_VENV`` so conversion deps
+    (torch, transformers, sentencepiece, ...) never touch the user's
+    interpreter.
+    """
     convert = LLAMA_CPP / "convert_hf_to_gguf.py"
 
     if not LLAMA_CPP.exists():
@@ -229,16 +292,34 @@ def ensure_llama_cpp() -> Path:
     else:
         logger.info(f"Using llama.cpp at {LLAMA_CPP} (no git metadata, commit unknown)")
 
-    req = LLAMA_CPP / "requirements" / "requirements-convert_hf_to_gguf.txt"
-    if req.exists():
-        logger.info("Installing llama.cpp conversion requirements")
+    python_bin = venv_python(LLAMA_VENV)
+    if not python_bin.exists():
+        logger.info(f"Creating isolated venv for llama.cpp at {LLAMA_VENV}")
         subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-q", "-r", str(req)],
+            [sys.executable, "-m", "venv", str(LLAMA_VENV)],
             check=True,
-            timeout=600,
+            timeout=300,
+        )
+        # Upgrade pip inside the venv once — old pip versions choke on some wheels.
+        subprocess.run(
+            [str(python_bin), "-m", "pip", "install", "-q", "--upgrade", "pip"],
+            check=True,
+            timeout=300,
         )
 
-    return convert
+    req = LLAMA_CPP / "requirements" / "requirements-convert_hf_to_gguf.txt"
+    if req.exists():
+        marker = LLAMA_VENV / ".hf2ollama-deps-installed"
+        if not marker.exists() or marker.stat().st_mtime < req.stat().st_mtime:
+            logger.info(f"Installing llama.cpp conversion requirements into {LLAMA_VENV}")
+            subprocess.run(
+                [str(python_bin), "-m", "pip", "install", "-q", "-r", str(req)],
+                check=True,
+                timeout=900,
+            )
+            marker.touch()
+
+    return convert, python_bin
 
 
 def download_model(model_id: str, quant: str | None = None) -> Path:
@@ -288,14 +369,14 @@ def pick_gguf(ggufs: list[Path], preferred: str | None = None) -> Path:
     return ggufs[0]
 
 
-def convert_to_gguf(model_dir: Path, model_id: str, convert_script: Path) -> Path:
+def convert_to_gguf(model_dir: Path, model_id: str, convert_script: Path, python_bin: Path) -> Path:
     """Convert HF model to GGUF placed next to its source files."""
     name = model_id.split("/", 1)[1]
     out_path = model_dir / f"{name}.{OUTTYPE}.gguf"
     logger.info(f"Converting to GGUF ({OUTTYPE}): {out_path}")
     subprocess.run(
         [
-            sys.executable,
+            str(python_bin),
             str(convert_script),
             str(model_dir),
             "--outfile",
@@ -344,6 +425,11 @@ def main() -> None:
         action="store_true",
         help="List available .gguf files in the repo (with sizes) and exit",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the planned actions (clone, venv, download, convert) without executing them",
+    )
     args = parser.parse_args()
 
     model_id = args.model_id.strip()
@@ -383,6 +469,10 @@ def main() -> None:
                 logger.warning(f"--quant ignored: {model_id} has no .gguf files (looks like a normal HF model).")
                 args.quant = None
 
+        if args.dry_run:
+            print_dry_run_plan(model_id, args.quant, args.ollama_name)
+            return
+
         model_dir = download_model(model_id, quant=args.quant)
         existing = find_existing_ggufs(model_dir)
         config = model_dir / "config.json"
@@ -391,8 +481,8 @@ def main() -> None:
             gguf_path = pick_gguf(existing, preferred=args.quant)
             logger.info(f"Repo ships {len(existing)} GGUF file(s); using {gguf_path.name} (skipping conversion)")
         elif config.exists():
-            convert_script = ensure_llama_cpp()
-            gguf_path = convert_to_gguf(model_dir, model_id, convert_script)
+            convert_script, python_bin = ensure_llama_cpp()
+            gguf_path = convert_to_gguf(model_dir, model_id, convert_script, python_bin)
         else:
             logger.error(f"No config.json and no .gguf files in {model_dir}. Repo may be empty, gated without access, or use an unsupported layout.")
             sys.exit(1)
