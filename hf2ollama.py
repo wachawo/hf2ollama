@@ -83,11 +83,29 @@ QUANT_ALLOW_PATTERNS = [
 # so model_id cannot become a path-traversal vector when joined with HF_DIR.
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 
+# llama.cpp quant tokens look like Q4_K_M, IQ3_XXS, F16, BF16, ...
+QUANT_ARG_RE = re.compile(r"^[A-Za-z0-9_]{1,32}$")
+
+# Strip ASCII control chars (incl. ESC) so user-supplied values cannot inject
+# ANSI sequences into the terminal when echoed back in errors/logs.
+CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+
 
 def validate_model_id(model_id: str) -> None:
     """Reject model ids that do not match the HuggingFace owner/name shape."""
     if not MODEL_ID_RE.match(model_id):
         raise ValueError(f"Invalid model id (expected owner/name, alphanumerics plus '._-' only): {model_id!r}")
+
+
+def validate_quant_arg(quant: str) -> None:
+    """Reject --quant tokens that fall outside the alphanumeric/underscore shape."""
+    if not QUANT_ARG_RE.match(quant):
+        raise ValueError(f"Invalid --quant value (expected alphanumerics and '_' only): {quant!r}")
+
+
+def safe(value: str) -> str:
+    """Strip control characters so untrusted strings are safe to echo."""
+    return CONTROL_CHARS_RE.sub("?", value)
 
 
 def sibling_size(s: Any) -> int:
@@ -318,8 +336,15 @@ def main() -> None:
     try:
         validate_model_id(model_id)
     except ValueError as exc:
-        logger.error(str(exc))
+        logger.error(safe(str(exc)))
         sys.exit(2)
+
+    if args.quant is not None:
+        try:
+            validate_quant_arg(args.quant)
+        except ValueError as exc:
+            logger.error(safe(str(exc)))
+            sys.exit(2)
 
     if args.list:
         try:
@@ -379,7 +404,7 @@ def main() -> None:
         logger.error(f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
         sys.exit(1)
 
-    ollama_name = args.ollama_name or derive_ollama_name(model_id)
+    ollama_name = safe(args.ollama_name) if args.ollama_name else derive_ollama_name(model_id)
 
     # Let background tqdm bars from huggingface_hub finish flushing before our final block.
     sys.stderr.flush()
