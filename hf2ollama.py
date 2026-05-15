@@ -47,7 +47,12 @@ LLAMA_REPO = "https://github.com/ggerganov/llama.cpp.git"
 # Branch, tag or 40-char SHA to clone. Defaults to "master" for convenience;
 # set HF2OLLAMA_LLAMA_CPP_REF=<tag-or-sha> to pin to an audited revision.
 LLAMA_REPO_REF = os.getenv("HF2OLLAMA_LLAMA_CPP_REF", "master")
-OUTTYPE = os.getenv("OUTTYPE", "f16")
+# llama.cpp's convert_hf_to_gguf.py --outtype only accepts these. Anything
+# else is a typo that would otherwise fail deep inside the conversion script
+# with a confusing traceback. Validation happens in validate_outtype() so
+# importing the module never raises.
+VALID_OUTTYPES = ("f16", "f32", "bf16", "q8_0", "auto")
+OUTTYPE = os.getenv("OUTTYPE", "f16").strip().lower()
 QUANT_PRIORITY = (
     "Q4_K_M",
     "Q5_K_M",
@@ -105,6 +110,12 @@ def validate_quant_arg(quant: str) -> None:
     """Reject --quant tokens that fall outside the alphanumeric/underscore shape."""
     if not QUANT_ARG_RE.match(quant):
         raise ValueError(f"Invalid --quant value (expected alphanumerics and '_' only): {quant!r}")
+
+
+def validate_outtype(outtype: str) -> None:
+    """Reject OUTTYPE values llama.cpp's convert_hf_to_gguf.py does not accept."""
+    if outtype not in VALID_OUTTYPES:
+        raise ValueError(f"Invalid OUTTYPE {outtype!r}. Expected one of: {', '.join(VALID_OUTTYPES)}.")
 
 
 def safe(value: str) -> str:
@@ -435,6 +446,12 @@ def main() -> None:
     model_id = args.model_id.strip()
     try:
         validate_model_id(model_id)
+    except ValueError as exc:
+        logger.error(safe(str(exc)))
+        sys.exit(2)
+
+    try:
+        validate_outtype(OUTTYPE)
     except ValueError as exc:
         logger.error(safe(str(exc)))
         sys.exit(2)

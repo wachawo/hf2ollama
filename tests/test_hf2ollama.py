@@ -65,6 +65,17 @@ class TestValidateQuantArg:
             h.validate_quant_arg(q)
 
 
+class TestValidateOuttype:
+    @pytest.mark.parametrize("v", ["f16", "f32", "bf16", "q8_0", "auto"])
+    def test_accepts_valid(self, v: str) -> None:
+        h.validate_outtype(v)
+
+    @pytest.mark.parametrize("v", ["", "F16", "fp16", "q4_k_m", "auto ", "q8", "garbage"])
+    def test_rejects_invalid(self, v: str) -> None:
+        with pytest.raises(ValueError):
+            h.validate_outtype(v)
+
+
 class TestSafe:
     def test_strips_control_chars(self) -> None:
         assert h.safe("hello\x00world") == "hello?world"
