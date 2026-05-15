@@ -11,6 +11,11 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 hf/
 .hf_cache/
 venv/

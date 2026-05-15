@@ -7,12 +7,16 @@ out (git, llama.cpp) is intentionally not tested here — those paths
 belong in an integration suite.
 """
 
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import hf2ollama as h
+
+SCRIPT = Path(h.__file__).resolve()
 
 
 class TestValidateModelId:
@@ -198,3 +202,18 @@ class TestFindExistingGgufs:
 
     def test_empty_dir(self, tmp_path: Path) -> None:
         assert h.find_existing_ggufs(tmp_path) == []
+
+
+class TestCli:
+    """Subprocess-level smoke tests for the actual CLI entry point."""
+
+    def test_help_exits_zero(self) -> None:
+        r = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0
+        assert "usage" in r.stdout.lower()
+        assert "model_id" in r.stdout
+
+    def test_bad_model_id_exits_two(self) -> None:
+        r = subprocess.run([sys.executable, str(SCRIPT), "bogus-no-slash"], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 2
+        assert "invalid model id" in r.stderr.lower()

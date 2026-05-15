@@ -2,3 +2,4 @@
 black
 ruff
 mypy
+pytest-cov

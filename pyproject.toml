@@ -39,6 +39,7 @@ dev = [
     "mypy>=1.10",
     "build>=1.0",
     "pytest>=8.0",
+    "pytest-cov>=5.0",
 ]
 
 [project.urls]
@@ -76,4 +77,12 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-ra -q"
+required_plugins = ["pytest-cov"]
+addopts = "-ra -q -p pytest_cov --cov --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["hf2ollama"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
