@@ -40,6 +40,9 @@ HF_DIR = Path(os.getenv("HF2OLLAMA_HF_DIR", str(BASE_DIR / "hf"))).resolve()
 HF_CACHE_DIR = Path(os.getenv("HF2OLLAMA_CACHE_DIR", str(BASE_DIR / ".hf_cache"))).resolve()
 LLAMA_CPP = Path(os.getenv("HF2OLLAMA_LLAMA_CPP_DIR", str(BASE_DIR.parent / "llama.cpp"))).resolve()
 LLAMA_REPO = "https://github.com/ggerganov/llama.cpp.git"
+# Branch, tag or 40-char SHA to clone. Defaults to "master" for convenience;
+# set HF2OLLAMA_LLAMA_CPP_REF=<tag-or-sha> to pin to an audited revision.
+LLAMA_REPO_REF = os.getenv("HF2OLLAMA_LLAMA_CPP_REF", "master")
 OUTTYPE = os.getenv("OUTTYPE", "f16")
 QUANT_PRIORITY = (
     "Q4_K_M",
@@ -176,11 +179,18 @@ def ensure_llama_cpp() -> Path:
     if not LLAMA_CPP.exists():
         if not shutil.which("git"):
             raise RuntimeError("git is required but not found in PATH")
-        logger.info(f"Cloning llama.cpp into {LLAMA_CPP}")
+        logger.info(f"Cloning llama.cpp ({LLAMA_REPO_REF}) into {LLAMA_CPP}")
         subprocess.run(
-            ["git", "clone", "--depth", "1", LLAMA_REPO, str(LLAMA_CPP)],
+            ["git", "clone", "--depth", "1", "--branch", LLAMA_REPO_REF, LLAMA_REPO, str(LLAMA_CPP)],
             check=True,
         )
+
+    # Surface the resolved commit so a compromised upstream is easier to spot.
+    sha = subprocess.check_output(
+        ["git", "-C", str(LLAMA_CPP), "rev-parse", "HEAD"],
+        text=True,
+    ).strip()
+    logger.info(f"llama.cpp at {sha} ({LLAMA_REPO_REF})")
 
     req = LLAMA_CPP / "requirements" / "requirements-convert_hf_to_gguf.txt"
     if req.exists():
