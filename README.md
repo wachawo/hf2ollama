@@ -108,7 +108,7 @@ if you want to share things between workspaces:
 | `HF2OLLAMA_WORKSPACE`        | `$PWD`                        | Base directory for everything below.   |
 | `HF2OLLAMA_HF_DIR`           | `<workspace>/hf`              | Where HF snapshots and GGUFs go.       |
 | `HF2OLLAMA_CACHE_DIR`        | `<workspace>/.hf_cache`       | `huggingface_hub` cache.               |
-| `HF2OLLAMA_LLAMA_CPP_DIR`    | `<workspace>/../llama.cpp`    | Where to clone `llama.cpp`.            |
+| `HF2OLLAMA_LLAMA_CPP_DIR`    | `<workspace>/llama.cpp`       | Where to clone `llama.cpp`.            |
 
 ---
 
@@ -126,12 +126,14 @@ if you want to share things between workspaces:
 │       └── Modelfile
 └── .hf_cache/          # local huggingface_hub cache
 
-<workspace>/../llama.cpp/   # cloned once, reused across workspaces
+<workspace>/llama.cpp/   # cloned on first conversion run
 ```
 
-The first run also clones [`llama.cpp`](https://github.com/ggerganov/llama.cpp)
-one level above your workspace so the next run is fast. Only repos that ship
-prebuilt GGUF files skip this step.
+The first run that needs conversion also clones
+[`llama.cpp`](https://github.com/ggerganov/llama.cpp) into your workspace so
+the next run is fast. Only repos that ship prebuilt GGUF files skip this step.
+To share one clone across several workspaces, set `HF2OLLAMA_LLAMA_CPP_DIR`
+(e.g. `HF2OLLAMA_LLAMA_CPP_DIR=../llama.cpp`).
 
 ## Example output
 
@@ -189,7 +191,7 @@ loading. Two ways out:
 If you've converted to `f16` and want a smaller `Q4_K_M`:
 
 ```bash
-cd ../llama.cpp
+cd llama.cpp   # or wherever HF2OLLAMA_LLAMA_CPP_DIR points
 cmake -B build && cmake --build build --target llama-quantize -j
 ./build/bin/llama-quantize \
     <workspace>/hf/<org>/<name>/<name>.f16.gguf \

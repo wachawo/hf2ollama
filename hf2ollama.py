@@ -38,7 +38,7 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 BASE_DIR = Path(os.getenv("HF2OLLAMA_WORKSPACE", str(Path.cwd()))).resolve()
 HF_DIR = Path(os.getenv("HF2OLLAMA_HF_DIR", str(BASE_DIR / "hf"))).resolve()
 HF_CACHE_DIR = Path(os.getenv("HF2OLLAMA_CACHE_DIR", str(BASE_DIR / ".hf_cache"))).resolve()
-LLAMA_CPP = Path(os.getenv("HF2OLLAMA_LLAMA_CPP_DIR", str(BASE_DIR.parent / "llama.cpp"))).resolve()
+LLAMA_CPP = Path(os.getenv("HF2OLLAMA_LLAMA_CPP_DIR", str(BASE_DIR / "llama.cpp"))).resolve()
 LLAMA_REPO = "https://github.com/ggerganov/llama.cpp.git"
 # Branch, tag or 40-char SHA to clone. Defaults to "master" for convenience;
 # set HF2OLLAMA_LLAMA_CPP_REF=<tag-or-sha> to pin to an audited revision.

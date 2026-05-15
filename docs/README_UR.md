@@ -141,7 +141,7 @@ OUTTYPE=f16
 | `HF2OLLAMA_WORKSPACE`        | `$PWD`                       | نیچے کی ہر چیز کا بنیادی ڈائریکٹری۔     |
 | `HF2OLLAMA_HF_DIR`           | `<workspace>/hf`             | HF سنیپ شاٹس اور GGUF کہاں جائیں گے۔    |
 | `HF2OLLAMA_CACHE_DIR`        | `<workspace>/.hf_cache`      | `huggingface_hub` کیش۔                  |
-| `HF2OLLAMA_LLAMA_CPP_DIR`    | `<workspace>/../llama.cpp`   | `llama.cpp` کہاں کلون ہو۔                |
+| `HF2OLLAMA_LLAMA_CPP_DIR`    | `<workspace>/llama.cpp`      | `llama.cpp` کہاں کلون ہو۔                |
 
 ---
 
@@ -159,15 +159,16 @@ OUTTYPE=f16
 │       └── Modelfile
 └── .hf_cache/          # لوکل huggingface_hub کیش
 
-<workspace>/../llama.cpp/   # ایک بار کلون، کئی ورک سپیسز میں دوبارہ استعمال
+<workspace>/llama.cpp/   # پہلی کنورژن رن پر کلون
 ```
 
 <div dir="rtl" align="right">
 
-پہلا رن
-[`llama.cpp`](https://github.com/ggerganov/llama.cpp) کو آپ کے ورک سپیس سے
-ایک سطح اوپر کلون کر دیتا ہے، تاکہ اگلے رنز تیز ہوں۔ صرف وہی ریپو یہ قدم
-چھوڑتے ہیں جو پہلے سے GGUF رکھتے ہیں۔
+پہلی کنورژن رن
+[`llama.cpp`](https://github.com/ggerganov/llama.cpp) کو آپ کے ورک سپیس کے
+اندر کلون کر دیتی ہے، تاکہ اگلے رنز تیز ہوں۔ صرف وہی ریپو یہ قدم چھوڑتے ہیں
+جو پہلے سے پری بلٹ GGUF فائلیں رکھتے ہیں۔ ایک ہی کلون کو کئی ورک سپیسز میں
+شیئر کرنے کے لیے `HF2OLLAMA_LLAMA_CPP_DIR` سیٹ کریں (مثلاً `../llama.cpp`)۔
 
 </div>
 
@@ -251,7 +252,7 @@ Ollama بلابز کو sha256 سے انڈیکس کرتا ہے، ہاتھ کی ک
 </div>
 
 ```bash
-cd ../llama.cpp
+cd llama.cpp   # یا HF2OLLAMA_LLAMA_CPP_DIR میں طے شدہ ڈائریکٹری
 cmake -B build && cmake --build build --target llama-quantize -j
 ./build/bin/llama-quantize \
     <workspace>/hf/<org>/<name>/<name>.f16.gguf \

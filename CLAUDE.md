@@ -31,6 +31,9 @@ black .
 ruff check . --fix
 mypy hf2ollama.py
 
+# Unit tests — pure helpers only, no network, no subprocess
+pytest
+
 # Run every pre-commit hook on the whole repo (mirrors what CI does)
 pre-commit run --all-files
 
@@ -38,8 +41,13 @@ pre-commit run --all-files
 python -m build
 ```
 
-There is no test suite. CI exercises `hf2ollama --help` and an argv
-validation check; do not invent a `pytest` config.
+The `tests/` suite covers the pure helpers (`validate_model_id`,
+`pick_gguf`, `human_size`, `derive_ollama_name`, `write_modelfile`,
+`find_existing_ggufs`, ...). Anything that hits the network
+(`HfApi`, `snapshot_download`) or shells out (`git`, `convert_hf_to_gguf.py`)
+is deliberately not unit-tested — keep those paths in an integration
+suite if one is added later. CI also runs `hf2ollama --help` and an
+argv validation check.
 
 ## Architecture and important invariants
 
@@ -60,11 +68,12 @@ each has its own `HF2OLLAMA_*` override.
 to `~/.cache/huggingface/`. `cache_dir=` is also passed explicitly to
 `snapshot_download`. Keep both.
 
-### `llama.cpp` lives one directory above the workspace by default
+### `llama.cpp` lives inside the workspace by default
 
-`LLAMA_CPP = BASE_DIR.parent / "llama.cpp"`. The intent is to share the
-clone across several workspace directories. The clone is created lazily
-inside `ensure_llama_cpp()` and only when conversion is actually required.
+`LLAMA_CPP = BASE_DIR / "llama.cpp"`. The clone is created lazily inside
+`ensure_llama_cpp()` and only when conversion is actually required.
+To share one clone across several workspaces, point
+`HF2OLLAMA_LLAMA_CPP_DIR` at it (e.g. `../llama.cpp` in `.env`).
 
 ### Three execution paths in `main()`
 

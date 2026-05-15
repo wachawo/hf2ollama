@@ -110,7 +110,7 @@ OUTTYPE=f16
 | `HF2OLLAMA_WORKSPACE`        | `$PWD`                       | Корневой каталог для всего ниже.        |
 | `HF2OLLAMA_HF_DIR`           | `<workspace>/hf`             | Куда кладутся HF-снапшоты и GGUF.       |
 | `HF2OLLAMA_CACHE_DIR`        | `<workspace>/.hf_cache`      | Кэш `huggingface_hub`.                  |
-| `HF2OLLAMA_LLAMA_CPP_DIR`    | `<workspace>/../llama.cpp`   | Куда клонируется `llama.cpp`.           |
+| `HF2OLLAMA_LLAMA_CPP_DIR`    | `<workspace>/llama.cpp`      | Куда клонируется `llama.cpp`.           |
 
 ---
 
@@ -128,13 +128,15 @@ OUTTYPE=f16
 │       └── Modelfile
 └── .hf_cache/          # локальный кэш huggingface_hub
 
-<workspace>/../llama.cpp/   # клонируется один раз, переиспользуется между workspace
+<workspace>/llama.cpp/   # клонируется при первом запуске конверсии
 ```
 
-При первом запуске тулза также клонирует
-[`llama.cpp`](https://github.com/ggerganov/llama.cpp) на уровень выше
-workspace — последующие запуски быстрее. Шаг пропускается только для репо,
-которые уже содержат готовые GGUF.
+При первом запуске с конверсией тулза также клонирует
+[`llama.cpp`](https://github.com/ggerganov/llama.cpp) внутрь workspace —
+последующие запуски быстрее. Шаг пропускается только для репо, которые
+уже содержат готовые GGUF. Чтобы переиспользовать один клон в нескольких
+workspace, задайте `HF2OLLAMA_LLAMA_CPP_DIR` (например,
+`HF2OLLAMA_LLAMA_CPP_DIR=../llama.cpp`).
 
 ## Пример вывода
 
@@ -192,7 +194,7 @@ Done. To import the model into Ollama, run these 2 commands:
 Если уже есть `f16` и хочется компактный `Q4_K_M`:
 
 ```bash
-cd ../llama.cpp
+cd llama.cpp   # или каталог из HF2OLLAMA_LLAMA_CPP_DIR
 cmake -B build && cmake --build build --target llama-quantize -j
 ./build/bin/llama-quantize \
     <workspace>/hf/<org>/<name>/<name>.f16.gguf \

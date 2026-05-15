@@ -38,6 +38,7 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.10",
     "build>=1.0",
+    "pytest>=8.0",
 ]
 
 [project.urls]
@@ -71,3 +72,8 @@ python_version = "3.11"
 warn_return_any = true
 warn_unused_ignores = true
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra -q"

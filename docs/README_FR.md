@@ -110,7 +110,7 @@ entre projets, utilisez ces variables d'environnement :
 | `HF2OLLAMA_WORKSPACE`        | `$PWD`                       | Racine de tout ce qui suit.            |
 | `HF2OLLAMA_HF_DIR`           | `<workspace>/hf`             | Où vont les snapshots HF et les GGUF.  |
 | `HF2OLLAMA_CACHE_DIR`        | `<workspace>/.hf_cache`      | Cache de `huggingface_hub`.            |
-| `HF2OLLAMA_LLAMA_CPP_DIR`    | `<workspace>/../llama.cpp`   | Où cloner `llama.cpp`.                 |
+| `HF2OLLAMA_LLAMA_CPP_DIR`    | `<workspace>/llama.cpp`      | Où cloner `llama.cpp`.                 |
 
 ---
 
@@ -128,13 +128,15 @@ entre projets, utilisez ces variables d'environnement :
 │       └── Modelfile
 └── .hf_cache/          # cache local huggingface_hub
 
-<workspace>/../llama.cpp/   # cloné une fois, réutilisé entre workspaces
+<workspace>/llama.cpp/   # cloné lors de la première conversion
 ```
 
-Le premier lancement clone aussi
-[`llama.cpp`](https://github.com/ggerganov/llama.cpp) un niveau au-dessus du
-workspace, pour que les exécutions suivantes soient rapides. Seuls les dépôts
-qui livrent déjà du GGUF sautent cette étape.
+La première conversion clone
+[`llama.cpp`](https://github.com/ggerganov/llama.cpp) dans le workspace,
+pour que les exécutions suivantes soient rapides. Seuls les dépôts qui
+livrent déjà des fichiers GGUF préconstruits sautent cette étape. Pour
+partager un même clone entre plusieurs workspaces, définissez
+`HF2OLLAMA_LLAMA_CPP_DIR` (par exemple `../llama.cpp`).
 
 ## Exemple de sortie
 
@@ -194,7 +196,7 @@ au chargement. Deux options :
 Si vous avez déjà du `f16` et voulez un `Q4_K_M` plus léger :
 
 ```bash
-cd ../llama.cpp
+cd llama.cpp   # ou le répertoire indiqué par HF2OLLAMA_LLAMA_CPP_DIR
 cmake -B build && cmake --build build --target llama-quantize -j
 ./build/bin/llama-quantize \
     <workspace>/hf/<org>/<name>/<name>.f16.gguf \
