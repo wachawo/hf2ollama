@@ -31,3 +31,12 @@ repos:
           - "huggingface_hub>=0.25.0"
           - "python-dotenv>=1.0.0"
         args: ["--ignore-missing-imports"]
+
+  - repo: local
+    hooks:
+      - id: sync-agents-md
+        name: Keep AGENTS.md byte-identical to CLAUDE.md
+        language: system
+        entry: bash -c 'cp CLAUDE.md AGENTS.md && git add AGENTS.md'
+        files: '^(CLAUDE|AGENTS)\.md$'
+        pass_filenames: false
