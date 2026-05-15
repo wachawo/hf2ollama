@@ -76,6 +76,16 @@ QUANT_ALLOW_PATTERNS = [
     "*.model",
 ]
 
+# HuggingFace repo names: [A-Za-z0-9][A-Za-z0-9._-]{0,95}. Reject anything else
+# so model_id cannot become a path-traversal vector when joined with HF_DIR.
+MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}/[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+
+
+def validate_model_id(model_id: str) -> None:
+    """Reject model ids that do not match the HuggingFace owner/name shape."""
+    if not MODEL_ID_RE.match(model_id):
+        raise ValueError(f"Invalid model id (expected owner/name, alphanumerics plus '._-' only): {model_id!r}")
+
 
 def sibling_size(s: Any) -> int:
     """Best-effort size in bytes for a HuggingFace repo sibling object."""
@@ -193,8 +203,7 @@ def download_model(model_id: str, quant: str | None = None) -> Path:
     small support files are downloaded — saves bandwidth and disk on `*-GGUF`
     repos that ship many quantizations.
     """
-    if "/" not in model_id:
-        raise ValueError(f"Model id must be in form 'org/name': {model_id}")
+    validate_model_id(model_id)
     org, name = model_id.split("/", 1)
     target = HF_DIR / org / name
     target.mkdir(parents=True, exist_ok=True)
@@ -293,8 +302,10 @@ def main() -> None:
     args = parser.parse_args()
 
     model_id = args.model_id.strip()
-    if "/" not in model_id:
-        logger.error("Model id must be in form 'org/name'")
+    try:
+        validate_model_id(model_id)
+    except ValueError as exc:
+        logger.error(str(exc))
         sys.exit(2)
 
     if args.list:
