@@ -9,7 +9,6 @@ import re
 import shutil
 import subprocess
 import sys
-import time
 import traceback
 from pathlib import Path
 
@@ -34,13 +33,25 @@ logging.basicConfig(**LOGGING)
 logger = logging.getLogger(__name__)
 
 HF_TOKEN = os.getenv("HF_TOKEN")
-BASE_DIR = Path(__file__).resolve().parent
-HF_DIR = BASE_DIR / "hf"
-HF_CACHE_DIR = BASE_DIR / ".hf_cache"
-LLAMA_CPP = BASE_DIR.parent / "llama.cpp"
+# Workspace = current working directory. Works for both `python3 hf2ollama.py` from
+# a checkout and `hf2ollama` from a pip-installed binary launched anywhere.
+BASE_DIR = Path(os.getenv("HF2OLLAMA_WORKSPACE", str(Path.cwd()))).resolve()
+HF_DIR = Path(os.getenv("HF2OLLAMA_HF_DIR", str(BASE_DIR / "hf"))).resolve()
+HF_CACHE_DIR = Path(os.getenv("HF2OLLAMA_CACHE_DIR", str(BASE_DIR / ".hf_cache"))).resolve()
+LLAMA_CPP = Path(os.getenv("HF2OLLAMA_LLAMA_CPP_DIR", str(BASE_DIR.parent / "llama.cpp"))).resolve()
 LLAMA_REPO = "https://github.com/ggerganov/llama.cpp.git"
 OUTTYPE = os.getenv("OUTTYPE", "f16")
-QUANT_PRIORITY = ("Q4_K_M", "Q5_K_M", "Q4_K_S", "Q8_0", "Q5_0", "Q4_0", "F16", "BF16", "F32")
+QUANT_PRIORITY = (
+    "Q4_K_M",
+    "Q5_K_M",
+    "Q4_K_S",
+    "Q8_0",
+    "Q5_0",
+    "Q4_0",
+    "F16",
+    "BF16",
+    "F32",
+)
 
 # Keep all HuggingFace caches inside the project dir, not in ~/.cache/huggingface
 os.environ.setdefault("HF_HOME", str(HF_CACHE_DIR))
@@ -141,7 +152,9 @@ def print_quant_list(model_id: str) -> None:
             total += size
         print()
         print(f"Total download size: ~{human_size(total)}")
-        print("Run without --list/--quant to download and convert to GGUF via llama.cpp.")
+        print(
+            "Run without --list/--quant to download and convert to GGUF via llama.cpp."
+        )
         return
 
     print(f"{model_id}: repo has no weight files (.gguf / .safetensors / .bin / ...).")
@@ -260,7 +273,7 @@ def main():
     )
     parser.add_argument(
         "model_id",
-        help="HuggingFace model id, e.g. PantheonUnbound/Satyr-V0.1-4B",
+        help="HuggingFace model id, e.g. SicariusSicariiStuff/Assistant_Pepe_70B",
     )
     parser.add_argument(
         "--ollama-name",

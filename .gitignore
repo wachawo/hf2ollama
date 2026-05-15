@@ -8,6 +8,9 @@
 !.env.example
 __pycache__/
 *.pyc
+*.egg-info/
+build/
+dist/
 hf/
 .hf_cache/
 venv/

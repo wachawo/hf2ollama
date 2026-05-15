@@ -1,0 +1,7 @@
+include README.md
+include LICENSE
+include MANIFEST.in
+include pyproject.toml
+include requirements.txt
+include .env.example
+include hf2ollama.py
