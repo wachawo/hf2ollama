@@ -11,7 +11,9 @@ import subprocess
 import sys
 import traceback
 from pathlib import Path
+from typing import Any
 
+from dotenv import find_dotenv, load_dotenv
 from huggingface_hub import HfApi, snapshot_download
 from huggingface_hub.utils import (
     GatedRepoError,
@@ -19,11 +21,9 @@ from huggingface_hub.utils import (
     RepositoryNotFoundError,
 )
 
-from dotenv import load_dotenv, find_dotenv
-
 load_dotenv(find_dotenv())
 
-LOGGING = {
+LOGGING: dict[str, Any] = {
     "handlers": [logging.StreamHandler()],
     "format": "%(asctime)s.%(msecs)03d [%(levelname)s]: (%(name)s) %(message)s",
     "level": logging.INFO,
@@ -77,7 +77,8 @@ QUANT_ALLOW_PATTERNS = [
 ]
 
 
-def _sibling_size(s) -> int:
+def sibling_size(s: Any) -> int:
+    """Best-effort size in bytes for a HuggingFace repo sibling object."""
     lfs = getattr(s, "lfs", None)
     if lfs is not None:
         size = getattr(lfs, "size", 0) or 0
@@ -90,7 +91,8 @@ def list_repo_files(model_id: str) -> list[tuple[str, int]]:
     """Return [(filename, size_bytes)] for every file in the repo."""
     api = HfApi(token=HF_TOKEN or None)
     info = api.repo_info(model_id, files_metadata=True)
-    return sorted((s.rfilename, _sibling_size(s)) for s in info.siblings)
+    siblings = getattr(info, "siblings", None) or []
+    return sorted((s.rfilename, sibling_size(s)) for s in siblings)
 
 
 def list_repo_ggufs(model_id: str) -> list[tuple[str, int]]:
@@ -152,9 +154,7 @@ def print_quant_list(model_id: str) -> None:
             total += size
         print()
         print(f"Total download size: ~{human_size(total)}")
-        print(
-            "Run without --list/--quant to download and convert to GGUF via llama.cpp."
-        )
+        print("Run without --list/--quant to download and convert to GGUF via llama.cpp.")
         return
 
     print(f"{model_id}: repo has no weight files (.gguf / .safetensors / .bin / ...).")
@@ -199,12 +199,12 @@ def download_model(model_id: str, quant: str | None = None) -> Path:
     target = HF_DIR / org / name
     target.mkdir(parents=True, exist_ok=True)
 
-    kwargs = dict(
-        repo_id=model_id,
-        local_dir=str(target),
-        cache_dir=str(HF_CACHE_DIR / "hub"),
-        token=HF_TOKEN or None,
-    )
+    kwargs: dict[str, Any] = {
+        "repo_id": model_id,
+        "local_dir": str(target),
+        "cache_dir": str(HF_CACHE_DIR / "hub"),
+        "token": HF_TOKEN or None,
+    }
     if quant:
         logger.info(f"Downloading {model_id} (quant={quant}) -> {target}")
         kwargs["allow_patterns"] = [f"*{quant}*.gguf", *QUANT_ALLOW_PATTERNS]
@@ -254,7 +254,7 @@ def convert_to_gguf(model_dir: Path, model_id: str, convert_script: Path) -> Pat
     return out_path
 
 
-def write_modelfile(gguf_path: Path, model_id: str) -> Path:
+def write_modelfile(gguf_path: Path) -> Path:
     """Write a minimal Ollama Modelfile next to the GGUF file."""
     mf = gguf_path.parent / "Modelfile"
     mf.write_text(f"FROM {gguf_path}\n", encoding="utf-8")
@@ -267,7 +267,7 @@ def derive_ollama_name(model_id: str) -> str:
     return name.replace("_", "-")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Download a HuggingFace model and convert it to GGUF for Ollama.",
     )
@@ -301,10 +301,7 @@ def main():
         try:
             print_quant_list(model_id)
         except GatedRepoError:
-            logger.error(
-                f"Repository '{model_id}' is gated. Accept the license on the model page "
-                f"and ensure HF_TOKEN in .env has access."
-            )
+            logger.error(f"Repository '{model_id}' is gated. Accept the license on the model page and ensure HF_TOKEN in .env has access.")
             sys.exit(1)
         except RepositoryNotFoundError:
             logger.error(f"Repository '{model_id}' not found on HuggingFace.")
@@ -317,15 +314,10 @@ def main():
             if repo_ggufs:
                 matches = [n for n, _ in repo_ggufs if args.quant.lower() in n.lower()]
                 if not matches:
-                    logger.error(
-                        f"--quant '{args.quant}' did not match any .gguf in {model_id}. "
-                        f"Run with --list to see available quants."
-                    )
+                    logger.error(f"--quant '{args.quant}' did not match any .gguf in {model_id}. Run with --list to see available quants.")
                     sys.exit(1)
             else:
-                logger.warning(
-                    f"--quant ignored: {model_id} has no .gguf files (looks like a normal HF model)."
-                )
+                logger.warning(f"--quant ignored: {model_id} has no .gguf files (looks like a normal HF model).")
                 args.quant = None
 
         model_dir = download_model(model_id, quant=args.quant)
@@ -334,31 +326,20 @@ def main():
 
         if existing:
             gguf_path = pick_gguf(existing, preferred=args.quant)
-            logger.info(
-                f"Repo ships {len(existing)} GGUF file(s); using {gguf_path.name} (skipping conversion)"
-            )
+            logger.info(f"Repo ships {len(existing)} GGUF file(s); using {gguf_path.name} (skipping conversion)")
         elif config.exists():
             convert_script = ensure_llama_cpp()
             gguf_path = convert_to_gguf(model_dir, model_id, convert_script)
         else:
-            logger.error(
-                f"No config.json and no .gguf files in {model_dir}. "
-                f"Repo may be empty, gated without access, or use an unsupported layout."
-            )
+            logger.error(f"No config.json and no .gguf files in {model_dir}. Repo may be empty, gated without access, or use an unsupported layout.")
             sys.exit(1)
 
-        modelfile = write_modelfile(gguf_path, model_id)
+        modelfile = write_modelfile(gguf_path)
     except GatedRepoError:
-        logger.error(
-            f"Repository '{model_id}' is gated. Accept the license on the model page "
-            f"and ensure HF_TOKEN in .env has access."
-        )
+        logger.error(f"Repository '{model_id}' is gated. Accept the license on the model page and ensure HF_TOKEN in .env has access.")
         sys.exit(1)
     except RepositoryNotFoundError:
-        logger.error(
-            f"Repository '{model_id}' not found on HuggingFace. "
-            f"Check the spelling — some models (e.g. xAI Grok) are not published on HF."
-        )
+        logger.error(f"Repository '{model_id}' not found on HuggingFace. Check the spelling — some models (e.g. xAI Grok) are not published on HF.")
         sys.exit(1)
     except HfHubHTTPError as exc:
         logger.error(f"HuggingFace HTTP error: {type(exc).__name__}: {exc}")

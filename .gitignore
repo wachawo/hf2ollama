@@ -18,4 +18,5 @@ venv/
 *.md
 !README.md
 !CHANGELOG.md
+!CONTRIBUTING.md
 !docs/*.md

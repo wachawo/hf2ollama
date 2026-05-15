@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hf2ollama"
-version = "0.0.0"
+version = "0.0.1"
 description = "Download a HuggingFace model and convert it to GGUF for Ollama."
 readme = { file = "README.md", content-type = "text/markdown" }
 license = { file = "LICENSE" }
@@ -31,6 +31,15 @@ dependencies = [
     "python-dotenv>=1.0.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pre-commit>=3.7",
+    "black>=24.0",
+    "ruff>=0.8",
+    "mypy>=1.10",
+    "build>=1.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/wachawo/hf2ollama"
 Repository = "https://github.com/wachawo/hf2ollama.git"
@@ -42,3 +51,23 @@ hf2ollama = "hf2ollama:main"
 
 [tool.setuptools]
 py-modules = ["hf2ollama"]
+
+[tool.black]
+line-length = 180
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 180
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "SIM"]
+# E501: long lines (we cap via line-length, but keep some tables/URLs)
+# UP009: keep the `# -*- coding: utf-8 -*-` header per project convention
+ignore = ["E501", "UP009"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true
