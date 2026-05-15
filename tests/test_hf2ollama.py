@@ -246,6 +246,45 @@ class TestInitState:
         assert h.load_initialized_python() == py
 
 
+class TestRemove:
+    def test_paths_have_expected_shape(self) -> None:
+        snap, hub = h.model_cache_paths("Some-Org/Some_Model")
+        assert snap == h.HF_DIR / "Some-Org" / "Some_Model"
+        assert hub == h.HF_CACHE_DIR / "hub" / "models--Some-Org--Some_Model"
+
+    def test_dir_size_empty(self, tmp_path: Path) -> None:
+        assert h.dir_size(tmp_path) == 0
+        assert h.dir_size(tmp_path / "does-not-exist") == 0
+
+    def test_dir_size_counts_files(self, tmp_path: Path) -> None:
+        (tmp_path / "a").write_bytes(b"x" * 100)
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "sub" / "b").write_bytes(b"y" * 250)
+        assert h.dir_size(tmp_path) == 350
+
+    def test_remove_model_clears_both_locations(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        hf_dir = tmp_path / "hf"
+        cache_dir = tmp_path / "cache"
+        monkeypatch.setattr(h, "HF_DIR", hf_dir)
+        monkeypatch.setattr(h, "HF_CACHE_DIR", cache_dir)
+
+        snap = hf_dir / "owner" / "name"
+        hub = cache_dir / "hub" / "models--owner--name"
+        snap.mkdir(parents=True)
+        hub.mkdir(parents=True)
+        (snap / "f").write_bytes(b"x")
+        (hub / "blob").write_bytes(b"y")
+
+        assert h.remove_model("owner/name") == 2
+        assert not snap.exists()
+        assert not hub.exists()
+
+    def test_remove_model_idempotent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(h, "HF_DIR", tmp_path / "hf")
+        monkeypatch.setattr(h, "HF_CACHE_DIR", tmp_path / "cache")
+        assert h.remove_model("owner/name") == 0
+
+
 class TestCli:
     """Subprocess-level smoke tests for the actual CLI entry point."""
 

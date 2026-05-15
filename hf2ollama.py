@@ -3,6 +3,7 @@
 """Download a HuggingFace model and convert it to GGUF for Ollama."""
 
 import argparse
+import contextlib
 import logging
 import os
 import re
@@ -463,6 +464,46 @@ def derive_ollama_name(model_id: str) -> str:
     return name.replace("_", "-")
 
 
+def model_cache_paths(model_id: str) -> list[Path]:
+    """Return all on-disk locations that hold downloaded data for ``model_id``.
+
+    Two places get populated by snapshot_download:
+    - ``HF_DIR/<org>/<name>/`` — the materialized snapshot (used by us)
+    - ``HF_CACHE_DIR/hub/models--<org>--<name>/`` — huggingface_hub's blob cache
+    """
+    org, name = model_id.split("/", 1)
+    return [
+        HF_DIR / org / name,
+        HF_CACHE_DIR / "hub" / f"models--{org}--{name}",
+    ]
+
+
+def dir_size(path: Path) -> int:
+    """Sum of file sizes under ``path``; 0 if path does not exist."""
+    if not path.exists():
+        return 0
+    total = 0
+    for p in path.rglob("*"):
+        if p.is_file() and not p.is_symlink():
+            with contextlib.suppress(OSError):
+                total += p.stat().st_size
+    return total
+
+
+def remove_model(model_id: str) -> int:
+    """Delete cached data for ``model_id``. Returns number of paths removed."""
+    removed = 0
+    for path in model_cache_paths(model_id):
+        if not path.exists():
+            logger.info(f"Not present, skipping: {path}")
+            continue
+        size = dir_size(path)
+        shutil.rmtree(path)
+        logger.info(f"Removed {path}  ({human_size(size)})")
+        removed += 1
+    return removed
+
+
 def main() -> None:
     # Manual dispatch keeps backward compat: `hf2ollama org/name ...` continues
     # to work; only the literal first token `init` selects the setup subcommand.
@@ -506,6 +547,11 @@ def main() -> None:
         action="store_true",
         help="Print the planned actions (download, convert) without executing them",
     )
+    parser.add_argument(
+        "--remove",
+        action="store_true",
+        help="Delete this model's HF snapshot and huggingface_hub cache, then exit",
+    )
     args = parser.parse_args()
 
     model_id = args.model_id.strip()
@@ -537,6 +583,16 @@ def main() -> None:
         except RepositoryNotFoundError:
             logger.error(f"Repository '{model_id}' not found on HuggingFace.")
             sys.exit(1)
+        return
+
+    if args.remove:
+        try:
+            count = remove_model(model_id)
+        except OSError as exc:
+            logger.error(f"Failed to remove cache for {model_id}: {type(exc).__name__}: {exc}")
+            sys.exit(1)
+        if count == 0:
+            logger.info(f"Nothing to remove for {model_id}.")
         return
 
     try:
