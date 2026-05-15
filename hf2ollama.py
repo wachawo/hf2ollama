@@ -193,10 +193,17 @@ def print_quant_list(model_id: str) -> None:
 
 
 def ensure_llama_cpp() -> Path:
-    """Clone llama.cpp once and install its conversion requirements."""
+    """Ensure a usable llama.cpp checkout is available and return the convert script path."""
+    convert = LLAMA_CPP / "convert_hf_to_gguf.py"
+
     if not LLAMA_CPP.exists():
         if not shutil.which("git"):
-            raise RuntimeError("git is required but not found in PATH")
+            raise RuntimeError(
+                "llama.cpp is required for converting this model, but no clone was found "
+                f"at {LLAMA_CPP} and 'git' is not in PATH.\n"
+                "Either install git so the script can clone it, or point "
+                "HF2OLLAMA_LLAMA_CPP_DIR at an existing llama.cpp checkout."
+            )
         logger.info(f"Cloning llama.cpp ({LLAMA_REPO_REF}) into {LLAMA_CPP}")
         subprocess.run(
             ["git", "clone", "--depth", "1", "--branch", LLAMA_REPO_REF, LLAMA_REPO, str(LLAMA_CPP)],
@@ -204,13 +211,23 @@ def ensure_llama_cpp() -> Path:
             timeout=600,
         )
 
-    # Surface the resolved commit so a compromised upstream is easier to spot.
-    sha = subprocess.check_output(
-        ["git", "-C", str(LLAMA_CPP), "rev-parse", "HEAD"],
-        text=True,
-        timeout=30,
-    ).strip()
-    logger.info(f"llama.cpp at {sha} ({LLAMA_REPO_REF})")
+    if not convert.exists():
+        raise FileNotFoundError(
+            f"{convert} not found. {LLAMA_CPP} does not look like a llama.cpp checkout.\n" "Delete that directory and rerun, or set HF2OLLAMA_LLAMA_CPP_DIR to a working clone."
+        )
+
+    # If the checkout has git metadata, surface the resolved commit so a
+    # compromised upstream is easier to spot. Users may also point at a
+    # tarball-extracted directory with no .git/ — skip the lookup in that case.
+    if shutil.which("git") and (LLAMA_CPP / ".git").exists():
+        sha = subprocess.check_output(
+            ["git", "-C", str(LLAMA_CPP), "rev-parse", "HEAD"],
+            text=True,
+            timeout=30,
+        ).strip()
+        logger.info(f"llama.cpp at {sha} ({LLAMA_REPO_REF})")
+    else:
+        logger.info(f"Using llama.cpp at {LLAMA_CPP} (no git metadata, commit unknown)")
 
     req = LLAMA_CPP / "requirements" / "requirements-convert_hf_to_gguf.txt"
     if req.exists():
@@ -221,9 +238,6 @@ def ensure_llama_cpp() -> Path:
             timeout=600,
         )
 
-    convert = LLAMA_CPP / "convert_hf_to_gguf.py"
-    if not convert.exists():
-        raise FileNotFoundError(f"convert_hf_to_gguf.py not found in {LLAMA_CPP}")
     return convert
 
 
@@ -399,6 +413,11 @@ def main() -> None:
     except subprocess.TimeoutExpired as exc:
         cmd = exc.cmd if isinstance(exc.cmd, str) else " ".join(str(c) for c in exc.cmd)
         logger.error(f"Subprocess timed out after {exc.timeout}s: {cmd}")
+        sys.exit(1)
+    except (FileNotFoundError, RuntimeError) as exc:
+        # Missing prerequisite (git, llama.cpp checkout, conversion script).
+        # The message itself is actionable — no traceback needed.
+        logger.error(str(exc))
         sys.exit(1)
     except Exception as exc:
         logger.error(f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
