@@ -106,7 +106,7 @@ No PyPI API token is stored in GitHub Secrets.
 # 1. Bump the version in pyproject.toml (e.g. 0.0.0 -> 0.0.1)
 # 2. Commit, tag, push
 git commit -am "release 0.0.1"
-git tag 0.1.0
+git tag 0.0.1
 git push origin main --tags
 ```
 
